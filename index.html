@@ -551,8 +551,8 @@
     const RECITERS = [
       { id: "ar.alafasy", label: "Mishary Alafasy" },
       { id: "ar.abdulbasitmurattal", label: "Abdul Basit (Murattal)" },
-      { id: "ar.sudais", label: "Abdur Rahman Al-Sudais" },
-      { id: "ar.abdurrahmaansudais", label: "Sheikh Abdul Rahman Al-Ossi" }
+      { id: "ar.abdurrahmaansudais", label: "Abdur Rahman Al-Sudais" },
+      { id: "ar.husary", label: "Mahmoud Khalil Al-Husary" }
     ];
     const TRANSLATIONS = [
       { id: "en.sahih", label: "Saheeh International" },
@@ -823,10 +823,11 @@
 
     function updateButtons() {
       const hasAyahs = state.ayahs.length > 0;
+      const hasPlayableAyahs = hasAyahs && state.ayahs.some((ayah) => !!ayah.audioUrl);
       els.prevPageBtn.disabled = state.currentPage <= 1;
       els.nextPageBtn.disabled = state.currentPage >= TOTAL_PAGES;
-      els.playPageBtn.disabled = !hasAyahs;
-      els.globalPlayPauseBtn.disabled = !hasAyahs;
+      els.playPageBtn.disabled = !hasPlayableAyahs;
+      els.globalPlayPauseBtn.disabled = !hasPlayableAyahs;
       els.globalPlayPauseBtn.textContent = els.audio.paused ? "Play" : "Pause";
       els.playPageBtn.textContent = state.isFullPageMode ? "Stop Full Page" : "Play Full Page";
       els.rangeStartInput.disabled = !state.rangeRepeatEnabled;
@@ -999,9 +1000,12 @@
       const playButtons = els.ayahContainer.querySelectorAll(".ayah-play-btn[data-ayah-index]");
       playButtons.forEach((button) => {
         const index = Number(button.dataset.ayahIndex);
+        const ayah = state.ayahs[index];
+        const hasAudio = !!(ayah && ayah.audioUrl);
         const isCurrent = index === state.currentAyahIndex;
         const isPlaying = isCurrent && !els.audio.paused;
-        button.textContent = isPlaying ? "Pause" : "Play";
+        button.textContent = hasAudio ? (isPlaying ? "Pause" : "Play") : "No Audio";
+        button.disabled = !hasAudio;
         button.classList.toggle("is-playing", isPlaying);
       });
 
@@ -1223,6 +1227,9 @@
             audioUrl: (audioAyah && (audioAyah.audio || (audioAyah.audioSecondary && audioAyah.audioSecondary[0]))) || ""
           };
         });
+        if (!state.ayahs.some((ayah) => !!ayah.audioUrl)) {
+          showError("Selected reciter has no audio stream in this API. Please choose another reciter.");
+        }
 
         updateRangeBounds();
         updatePageHeader();
