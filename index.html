@@ -455,6 +455,7 @@
         <input id="searchInput" class="input" type="text" placeholder="Search Surah..." />
         <select id="reciterSelect" class="select" aria-label="Select reciter"></select>
         <select id="translationSelect" class="select" aria-label="Select translation"></select>
+        <select id="audioTranslationSelect" class="select" aria-label="Select audio translation"></select>
 
         <div class="page-jump">
           <input id="pageInput" class="input" type="number" min="1" max="604" placeholder="Page (1-604)" />
@@ -560,6 +561,11 @@
       { id: "en.yusufali", label: "Yusuf Ali" },
       { id: "en.asad", label: "Muhammad Asad" }
     ];
+    const AUDIO_TRANSLATIONS = [
+      { id: "none", label: "Audio Translation: Off" },
+      { id: "en.walk", label: "Audio Translation: English (Ibrahim Walk)" },
+      { id: "ur.khan", label: "Audio Translation: Urdu (Shamshad Ali Khan)" }
+    ];
     const SPEED_OPTIONS = [0.75, 1, 1.25, 1.5];
     const REPEAT_OPTIONS = [1, 2, 3, 5, 10];
     const WORD_MEANINGS = {
@@ -598,8 +604,10 @@
       currentPage: 1,
       currentReciter: RECITERS[0].id,
       currentTranslation: TRANSLATIONS[0].id,
+      currentAudioTranslation: AUDIO_TRANSLATIONS[0].id,
       currentAyahIndex: -1,
       currentAyahRepeatLeft: 1,
+      currentPlaybackPhase: "arabic",
       isFullPageMode: false,
       searchTerm: "",
       continueAcrossPages: false,
@@ -626,6 +634,7 @@
       searchInput: document.getElementById("searchInput"),
       reciterSelect: document.getElementById("reciterSelect"),
       translationSelect: document.getElementById("translationSelect"),
+      audioTranslationSelect: document.getElementById("audioTranslationSelect"),
       pageInput: document.getElementById("pageInput"),
       goPageBtn: document.getElementById("goPageBtn"),
       translationToggle: document.getElementById("translationToggle"),
@@ -751,6 +760,7 @@
         rangeEnd: state.rangeEnd,
         repeatAyahCount: state.repeatAyahCount,
         playbackRate: state.playbackRate,
+        audioTranslation: state.currentAudioTranslation,
         tajweedMode: state.tajweedMode,
         translationVisible: state.translationVisible,
         dailyGoal: state.dailyGoal
@@ -773,6 +783,9 @@
       state.playbackRate = SPEED_OPTIONS.includes(Number(savedSettings.playbackRate))
         ? Number(savedSettings.playbackRate)
         : 1;
+      state.currentAudioTranslation = AUDIO_TRANSLATIONS.some((item) => item.id === savedSettings.audioTranslation)
+        ? savedSettings.audioTranslation
+        : AUDIO_TRANSLATIONS[0].id;
       state.tajweedMode = !!savedSettings.tajweedMode;
       state.translationVisible = savedSettings.translationVisible !== false;
       state.dailyGoal = clamp(Number(savedSettings.dailyGoal || 5), 1, 50);
@@ -1036,7 +1049,8 @@
         }
       });
       const translationLabel = TRANSLATIONS.find((item) => item.id === state.currentTranslation)?.label || state.currentTranslation;
-      els.pageMeta.textContent = `${unique.join(" | ")} | ${state.ayahs.length} Ayahs | Translation: ${translationLabel}`;
+      const audioTranslationLabel = AUDIO_TRANSLATIONS.find((item) => item.id === state.currentAudioTranslation)?.label || state.currentAudioTranslation;
+      els.pageMeta.textContent = `${unique.join(" | ")} | ${state.ayahs.length} Ayahs | Translation: ${translationLabel} | ${audioTranslationLabel}`;
     }
 
     async function getSurahStartPage(surahNumber) {
@@ -1192,10 +1206,39 @@
       els.audio.removeAttribute("src");
       state.currentAyahIndex = -1;
       state.currentAyahRepeatLeft = Math.max(1, state.repeatAyahCount);
+      state.currentPlaybackPhase = "arabic";
       if (resetMode) state.isFullPageMode = false;
       updatePlayerText("Not playing");
       updateAyahButtons();
       updateButtons();
+    }
+
+    function translationAudioLabel() {
+      return AUDIO_TRANSLATIONS.find((item) => item.id === state.currentAudioTranslation)?.label || state.currentAudioTranslation;
+    }
+
+    function canPlaySelectedTranslationAudio(ayah) {
+      return state.currentAudioTranslation !== "none" && !!(ayah && ayah.translationAudioUrl);
+    }
+
+    async function playSelectedTranslationForCurrentAyah() {
+      if (state.currentAyahIndex < 0 || state.currentAyahIndex >= state.ayahs.length) return false;
+      const ayah = state.ayahs[state.currentAyahIndex];
+      if (!canPlaySelectedTranslationAudio(ayah)) return false;
+      state.currentPlaybackPhase = "translation";
+      els.audio.src = ayah.translationAudioUrl;
+      els.audio.playbackRate = state.playbackRate;
+      updatePlayerText(
+        `Playing Page ${state.currentPage} | ${ayah.surah.englishName} ${ayah.numberInSurah} | ${translationAudioLabel()} | ${state.playbackRate}x`
+      );
+      try {
+        await els.audio.play();
+        return true;
+      } catch {
+        state.currentPlaybackPhase = "arabic";
+        showError("Could not start translation audio. Continuing with recitation only.");
+        return false;
+      }
     }
 
     async function loadPage(pageNumber, options = {}) {
@@ -1207,14 +1250,24 @@
       safeLocalStorageSet(STORAGE_KEYS.lastPage, String(targetPage));
 
       try {
-        const [arabicPage, translationPage, audioPage] = await Promise.all([
+        const translationAudioPromise = state.currentAudioTranslation === "none"
+          ? Promise.resolve(null)
+          : fetchJson(`/page/${targetPage}/${state.currentAudioTranslation}`).catch(() => null);
+        const [arabicPage, translationPage, audioPage, translationAudioPage] = await Promise.all([
           fetchJson(`/page/${targetPage}/quran-uthmani`),
           fetchJson(`/page/${targetPage}/${state.currentTranslation}`),
-          fetchJson(`/page/${targetPage}/${state.currentReciter}`)
+          fetchJson(`/page/${targetPage}/${state.currentReciter}`),
+          translationAudioPromise
         ]);
 
         const translationByAyah = new Map((translationPage.ayahs || []).map((ayah) => [ayah.number, ayah.text]));
         const audioByAyah = new Map((audioPage.ayahs || []).map((ayah) => [ayah.number, ayah]));
+        const translationAudioByAyah = new Map(
+          ((translationAudioPage && translationAudioPage.ayahs) || []).map((ayah) => [
+            ayah.number,
+            ayah.audio || (ayah.audioSecondary && ayah.audioSecondary[0]) || ""
+          ])
+        );
         state.ayahs = (arabicPage.ayahs || []).map((ayah) => {
           const audioAyah = audioByAyah.get(ayah.number);
           return {
@@ -1224,12 +1277,20 @@
             page: ayah.page,
             arabicText: ayah.text,
             translationText: translationByAyah.get(ayah.number) || "",
-            audioUrl: (audioAyah && (audioAyah.audio || (audioAyah.audioSecondary && audioAyah.audioSecondary[0]))) || ""
+            audioUrl: (audioAyah && (audioAyah.audio || (audioAyah.audioSecondary && audioAyah.audioSecondary[0]))) || "",
+            translationAudioUrl: translationAudioByAyah.get(ayah.number) || ""
           };
         });
+        const nonFatalWarnings = [];
         if (!state.ayahs.some((ayah) => !!ayah.audioUrl)) {
-          showError("Selected reciter has no audio stream in this API. Please choose another reciter.");
+          nonFatalWarnings.push("Selected reciter has no audio stream in this API. Please choose another reciter.");
         }
+        if (state.currentAudioTranslation !== "none" && !translationAudioPage) {
+          nonFatalWarnings.push(`Could not load ${translationAudioLabel()} for this page.`);
+        } else if (state.currentAudioTranslation !== "none" && !state.ayahs.some((ayah) => !!ayah.translationAudioUrl)) {
+          nonFatalWarnings.push(`${translationAudioLabel()} has no verse audio on this page.`);
+        }
+        if (nonFatalWarnings.length) showError(nonFatalWarnings.join(" "));
 
         updateRangeBounds();
         updatePageHeader();
@@ -1272,6 +1333,7 @@
       clearError();
       state.currentAyahIndex = index;
       state.isFullPageMode = fromFullPage;
+      state.currentPlaybackPhase = "arabic";
       if (options.resetRepeatCounter !== false) state.currentAyahRepeatLeft = Math.max(1, state.repeatAyahCount);
       els.audio.src = ayah.audioUrl;
       els.audio.playbackRate = state.playbackRate;
@@ -1381,12 +1443,23 @@
       await reloadCurrentPagePreservingPosition();
     }
 
+    async function handleAudioTranslationChange() {
+      const selected = els.audioTranslationSelect.value;
+      if (selected === state.currentAudioTranslation) return;
+      state.currentAudioTranslation = selected;
+      persistSettings();
+      await reloadCurrentPagePreservingPosition();
+    }
+
     function initSelects() {
       els.reciterSelect.innerHTML = RECITERS.map(
         (item) => `<option value="${item.id}">${escapeHtml(item.label)} (${escapeHtml(item.id)})</option>`
       ).join("");
       els.translationSelect.innerHTML = TRANSLATIONS.map(
         (item) => `<option value="${item.id}">${escapeHtml(item.label)} (${escapeHtml(item.id)})</option>`
+      ).join("");
+      els.audioTranslationSelect.innerHTML = AUDIO_TRANSLATIONS.map(
+        (item) => `<option value="${item.id}">${escapeHtml(item.label)}</option>`
       ).join("");
       els.repeatCountSelect.innerHTML = REPEAT_OPTIONS.map(
         (count) => `<option value="${count}">Repeat Ayah x${count}</option>`
@@ -1397,6 +1470,7 @@
 
       els.reciterSelect.value = state.currentReciter;
       els.translationSelect.value = state.currentTranslation;
+      els.audioTranslationSelect.value = state.currentAudioTranslation;
       els.repeatCountSelect.value = String(state.repeatAyahCount);
       els.speedSelect.value = String(state.playbackRate);
       els.translationToggle.checked = state.translationVisible;
@@ -1493,6 +1567,7 @@
       els.globalPlayPauseBtn.addEventListener("click", toggleGlobalPlayPause);
       els.reciterSelect.addEventListener("change", handleReciterChange);
       els.translationSelect.addEventListener("change", handleTranslationEditionChange);
+      els.audioTranslationSelect.addEventListener("change", handleAudioTranslationChange);
 
       els.clearBookmarksBtn.addEventListener("click", () => {
         if (!state.bookmarks.length) return;
@@ -1608,6 +1683,15 @@
       });
 
       els.audio.addEventListener("ended", async () => {
+        if (state.currentPlaybackPhase === "arabic") {
+          const playedTranslation = await playSelectedTranslationForCurrentAyah();
+          if (playedTranslation) {
+            updateButtons();
+            updateAyahButtons();
+            return;
+          }
+        }
+        state.currentPlaybackPhase = "arabic";
         if (state.currentAyahRepeatLeft > 1) {
           state.currentAyahRepeatLeft -= 1;
           await playAyah(state.currentAyahIndex, state.isFullPageMode, { resetRepeatCounter: false });
