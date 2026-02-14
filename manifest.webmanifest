@@ -1,0 +1,21 @@
+{
+  "name": "Holy Quran Mushaf App",
+  "short_name": "Holy Quran",
+  "description": "Read, listen, and practice Quran recitation with an installable cross-platform app experience.",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f8fcff",
+  "theme_color": "#12a86f",
+  "orientation": "portrait-primary",
+  "lang": "en",
+  "categories": ["education", "books", "lifestyle"],
+  "icons": [
+    {
+      "src": "icons/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

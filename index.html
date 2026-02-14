@@ -3,6 +3,14 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#12a86f" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <meta name="apple-mobile-web-app-title" content="Holy Quran" />
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml" />
+  <link rel="apple-touch-icon" href="icons/icon.svg" />
   <title>Holy Quran Mushaf App</title>
   <style>
     :root {
@@ -260,6 +268,11 @@
     .status-row { margin-top: 10px; color: var(--muted); font-size: 0.86rem; }
     .kbd-hint {
       margin-top: 7px;
+      color: var(--muted);
+      font-size: 0.76rem;
+    }
+    .compat-note {
+      margin-top: 6px;
       color: var(--muted);
       font-size: 0.76rem;
     }
@@ -580,6 +593,7 @@
           <button id="nextPageBtn" class="btn btn-secondary" disabled>Next Page</button>
           <button id="playPageBtn" class="btn btn-primary" disabled>Play Full Page</button>
           <button id="globalPlayPauseBtn" class="btn btn-secondary" disabled>Play</button>
+          <button id="installAppBtn" class="btn btn-secondary hidden" type="button">Install App</button>
         </div>
         <div class="practice-row">
           <button id="practiceRecordBtn" class="btn btn-secondary" type="button" disabled>Start Practice</button>
@@ -588,6 +602,7 @@
         <div id="nowPlaying" class="status-row">Not playing</div>
         <div id="practiceStatus" class="status-row">Practice mode ready</div>
         <div class="kbd-hint">Shortcuts: Space play/pause | Left/Right page | Up/Down ayah</div>
+        <div id="compatNote" class="compat-note"></div>
       </section>
       <div id="loadingIndicator" class="loading hidden">
         <span class="spinner"></span>
@@ -668,6 +683,7 @@
       bookmarks: "quran_bookmarks",
       progress: "quran_progress"
     };
+    let deferredInstallPrompt = null;
 
     const state = {
       surahs: [],
@@ -745,8 +761,10 @@
       globalPlayPauseBtn: document.getElementById("globalPlayPauseBtn"),
       practiceRecordBtn: document.getElementById("practiceRecordBtn"),
       practicePlayBtn: document.getElementById("practicePlayBtn"),
+      installAppBtn: document.getElementById("installAppBtn"),
       nowPlaying: document.getElementById("nowPlaying"),
       practiceStatus: document.getElementById("practiceStatus"),
+      compatNote: document.getElementById("compatNote"),
       loadingIndicator: document.getElementById("loadingIndicator"),
       loadingText: document.getElementById("loadingText"),
       errorBanner: document.getElementById("errorBanner"),
@@ -851,6 +869,50 @@
     function updatePlayerText(text) {
       els.nowPlaying.textContent = text;
       els.playerBar.textContent = text;
+    }
+
+    function isSecurePwaContext() {
+      return location.protocol === "https:" || location.hostname === "localhost" || location.hostname === "127.0.0.1";
+    }
+
+    function updateCompatibilityNote() {
+      const platform = /Android/i.test(navigator.userAgent)
+        ? "Android"
+        : /Linux/i.test(navigator.platform)
+          ? "Linux"
+          : /Win/i.test(navigator.platform)
+            ? "Windows"
+            : "Desktop/Mobile";
+      if (isSecurePwaContext()) {
+        els.compatNote.textContent = `${platform}: Web + installable app mode available.`;
+      } else {
+        els.compatNote.textContent =
+          `${platform}: Running as standard web page. For installable standalone app, open via HTTPS or localhost.`;
+      }
+    }
+
+    async function registerServiceWorkerIfAvailable() {
+      if (!("serviceWorker" in navigator)) return;
+      if (!isSecurePwaContext()) return;
+      try {
+        await navigator.serviceWorker.register("./sw.js", { scope: "./" });
+      } catch {
+        // Non-fatal: app still works as normal web app.
+      }
+    }
+
+    function setupInstallPromptHandling() {
+      window.addEventListener("beforeinstallprompt", (event) => {
+        event.preventDefault();
+        deferredInstallPrompt = event;
+        els.installAppBtn.classList.remove("hidden");
+      });
+
+      window.addEventListener("appinstalled", () => {
+        deferredInstallPrompt = null;
+        els.installAppBtn.classList.add("hidden");
+        updatePlayerText("App installed successfully");
+      });
     }
 
     function todayKey() {
@@ -2055,6 +2117,20 @@
         await playPracticeRecording();
       });
 
+      els.installAppBtn.addEventListener("click", async () => {
+        if (!deferredInstallPrompt) {
+          updatePlayerText("Install prompt unavailable. Use browser menu: Install app/Add to Home Screen.");
+          return;
+        }
+        try {
+          deferredInstallPrompt.prompt();
+          await deferredInstallPrompt.userChoice;
+        } finally {
+          deferredInstallPrompt = null;
+          els.installAppBtn.classList.add("hidden");
+        }
+      });
+
       els.goPageBtn.addEventListener("click", () => {
         loadPage(Number(els.pageInput.value));
       });
@@ -2287,6 +2363,9 @@
       initSelects();
       renderBookmarks();
       renderProgress();
+      updateCompatibilityNote();
+      setupInstallPromptHandling();
+      await registerServiceWorkerIfAvailable();
       bindEvents();
       updateButtons();
       updatePlayerText("Ready");

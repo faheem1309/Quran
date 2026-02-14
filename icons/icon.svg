@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Holy Quran App Icon">
+  <defs>
+    <linearGradient id="bg" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0" stop-color="#12a86f" />
+      <stop offset="1" stop-color="#2a86e2" />
+    </linearGradient>
+    <linearGradient id="book" x1="0" x2="0" y1="0" y2="1">
+      <stop offset="0" stop-color="#ffffff" />
+      <stop offset="1" stop-color="#e7f3ff" />
+    </linearGradient>
+  </defs>
+  <rect x="24" y="24" width="464" height="464" rx="96" fill="url(#bg)" />
+  <path d="M126 154c0-16 13-30 30-30h95c36 0 68 14 95 36 27-22 59-36 95-36h15c16 0 30 14 30 30v206c0 16-14 30-30 30h-15c-35 0-68 13-95 35-27-22-59-35-95-35h-95c-17 0-30-14-30-30V154z" fill="url(#book)" opacity="0.98"/>
+  <path d="M256 166v224" stroke="#9ec6e6" stroke-width="8" stroke-linecap="round"/>
+  <path d="M173 202h58M173 232h58M173 262h58M281 202h58M281 232h58M281 262h58" stroke="#72a8cf" stroke-width="8" stroke-linecap="round"/>
+  <path d="M257 324c0-24 19-43 43-43s43 19 43 43-19 43-43 43-43-19-43-43z" fill="#f6c24f"/>
+  <path d="M300 290l11 22 24 4-17 17 4 24-22-12-22 12 4-24-17-17 24-4 11-22z" fill="#ffffff"/>
+</svg>
