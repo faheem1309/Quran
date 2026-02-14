@@ -968,9 +968,52 @@
 
     function renderArabicText(text) {
       const tokens = String(text || "").trim().split(/\s+/).filter(Boolean);
-      return tokens.map((token) => (
-        `<span class="word-chip" data-word="${encodeURIComponent(token)}">${tajweedWrapWord(token)}</span>`
+      return tokens.map((token, tokenIndex) => (
+        `<span class="word-chip" data-word-index="${tokenIndex}" data-word="${encodeURIComponent(token)}">${tajweedWrapWord(token)}</span>`
       )).join(" ");
+    }
+
+    function getWordChipsForAyah(index) {
+      if (index < 0) return [];
+      const ayahCard = els.ayahContainer.querySelector(`.ayah-card[data-ayah-index="${index}"]`);
+      if (!ayahCard) return [];
+      return Array.from(ayahCard.querySelectorAll(".word-chip"));
+    }
+
+    function clearWordCursor(index = null) {
+      const chips = index === null
+        ? Array.from(els.ayahContainer.querySelectorAll(".word-chip"))
+        : getWordChipsForAyah(index);
+      chips.forEach((chip) => {
+        chip.classList.remove("cursor-read", "cursor-active");
+      });
+    }
+
+    function setWordCursorCompletedForCurrentAyah() {
+      const chips = getWordChipsForAyah(state.currentAyahIndex);
+      if (!chips.length) return;
+      chips.forEach((chip) => {
+        chip.classList.remove("cursor-active");
+        chip.classList.add("cursor-read");
+      });
+    }
+
+    function updateWordCursorForCurrentAyah() {
+      if (state.currentAyahIndex < 0) return;
+      if (state.currentPlaybackPhase !== "arabic") return;
+      const chips = getWordChipsForAyah(state.currentAyahIndex);
+      if (!chips.length) return;
+      const duration = Number(els.audio.duration);
+      const currentTime = Number(els.audio.currentTime);
+      const safeDuration = Number.isFinite(duration) && duration > 0 ? duration : 0;
+      const rawProgress = safeDuration ? currentTime / safeDuration : 0;
+      const clampedProgress = Math.max(0, Math.min(0.9999, rawProgress));
+      const cursorIndex = Math.max(0, Math.min(chips.length - 1, Math.floor(clampedProgress * chips.length)));
+
+      chips.forEach((chip, chipIndex) => {
+        chip.classList.toggle("cursor-read", chipIndex < cursorIndex);
+        chip.classList.toggle("cursor-active", chipIndex === cursorIndex);
+      });
     }
 
     function isBookmarked(ayahNumber) {
@@ -1221,6 +1264,7 @@
       state.currentAyahIndex = -1;
       state.currentAyahRepeatLeft = Math.max(1, state.repeatAyahCount);
       state.currentPlaybackPhase = "arabic";
+      clearWordCursor();
       if (resetMode) state.isFullPageMode = false;
       updatePlayerText("Not playing");
       updateAyahButtons();
@@ -1239,6 +1283,7 @@
       if (state.currentAyahIndex < 0 || state.currentAyahIndex >= state.ayahs.length) return false;
       const ayah = state.ayahs[state.currentAyahIndex];
       if (!canPlaySelectedTranslationAudio(ayah)) return false;
+      setWordCursorCompletedForCurrentAyah();
       state.currentPlaybackPhase = "translation";
       els.audio.src = ayah.translationAudioUrl;
       els.audio.playbackRate = state.playbackRate;
@@ -1352,6 +1397,8 @@
       els.audio.src = ayah.audioUrl;
       els.audio.playbackRate = state.playbackRate;
       highlightAyah(index);
+      clearWordCursor();
+      updateWordCursorForCurrentAyah();
       updatePlayerText(
         `Playing Page ${state.currentPage} | ${ayah.surah.englishName} ${ayah.numberInSurah} | ${state.playbackRate}x`
       );
@@ -1687,6 +1734,7 @@
       });
 
       els.audio.addEventListener("play", () => {
+        updateWordCursorForCurrentAyah();
         updateButtons();
         updateAyahButtons();
       });
@@ -1696,8 +1744,21 @@
         updateAyahButtons();
       });
 
+      els.audio.addEventListener("timeupdate", () => {
+        updateWordCursorForCurrentAyah();
+      });
+
+      els.audio.addEventListener("loadedmetadata", () => {
+        updateWordCursorForCurrentAyah();
+      });
+
+      els.audio.addEventListener("seeking", () => {
+        updateWordCursorForCurrentAyah();
+      });
+
       els.audio.addEventListener("ended", async () => {
         if (state.currentPlaybackPhase === "arabic") {
+          setWordCursorCompletedForCurrentAyah();
           const playedTranslation = await playSelectedTranslationForCurrentAyah();
           if (playedTranslation) {
             updateButtons();
