@@ -370,9 +370,23 @@
       padding: 0 2px;
       transition: background 0.18s ease, color 0.18s ease;
     }
+    .word-chip.cursor-read {
+      background: rgba(21, 168, 121, 0.14);
+      color: #0f5f45;
+    }
+    .word-chip.cursor-active {
+      background: linear-gradient(120deg, rgba(21, 168, 121, 0.27), rgba(42, 134, 226, 0.18));
+      color: #0a3f30;
+      box-shadow: 0 0 0 1px rgba(21, 168, 121, 0.28), 0 6px 14px rgba(14, 93, 141, 0.18);
+      animation: wordPulse 0.95s ease-in-out infinite alternate;
+    }
     .word-chip:hover {
       background: rgba(21, 168, 121, 0.14);
       color: #0f5f45;
+    }
+    @keyframes wordPulse {
+      from { transform: translateY(0); }
+      to { transform: translateY(-1px); }
     }
     .tajweed-letter { font-weight: 700; }
     .tajweed-ghunnah { color: #0f9ac2; }
