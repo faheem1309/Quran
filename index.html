@@ -79,6 +79,11 @@
     }
 
     .page-jump { display: grid; grid-template-columns: 1fr auto; gap: 8px; }
+    .session-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
     .toggle-row {
       border: 1px solid var(--border);
       border-radius: 10px;
@@ -226,6 +231,12 @@
     .top-panel h2 { margin: 0; color: var(--text); font-size: clamp(1.08rem, 2.4vw, 1.45rem); }
     .top-panel p { margin: 6px 0 0; color: var(--muted); font-size: 0.88rem; }
     .toolbar { margin-top: 12px; display: flex; flex-wrap: wrap; gap: 8px; }
+    .practice-row {
+      margin-top: 8px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
     .btn {
       border: 1px solid transparent;
       border-radius: 10px;
@@ -284,7 +295,16 @@
       margin-bottom: 12px;
     }
 
-    .book-stage { max-width: 1060px; margin: 0 auto; perspective: 1200px; }
+    .book-stage { max-width: 1200px; margin: 0 auto; perspective: 1200px; }
+    .book-spread {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 12px;
+      align-items: start;
+    }
+    .book-spread.dual {
+      grid-template-columns: 1fr 1fr;
+    }
     .book-page {
       position: relative;
       border: 1px solid rgba(183, 134, 47, 0.28);
@@ -295,6 +315,15 @@
         linear-gradient(180deg, #ffffff, #f8fcff 70%, #f1f8ff);
       overflow: hidden;
       animation: pageIn 0.32s ease;
+    }
+    .page-badge {
+      padding: 8px 14px 4px;
+      color: #5f7c99;
+      font-size: 0.78rem;
+      font-weight: 700;
+      letter-spacing: 0.2px;
+      border-bottom: 1px solid rgba(20, 61, 95, 0.1);
+      background: linear-gradient(180deg, rgba(255, 255, 255, 0.5), rgba(236, 247, 255, 0.35));
     }
     .book-page::before {
       content: "";
@@ -453,7 +482,9 @@
       .sidebar { position: static; height: auto; border-right: none; border-bottom: 1px solid var(--border); }
       .content { padding-top: 12px; }
       .book-inner { max-height: none; }
+      .book-spread.dual { grid-template-columns: 1fr; }
       .inline-controls { grid-template-columns: 1fr; }
+      .session-row { grid-template-columns: 1fr; }
       .range-row { grid-template-columns: 1fr 1fr; }
     }
   </style>
@@ -470,6 +501,14 @@
         <select id="reciterSelect" class="select" aria-label="Select reciter"></select>
         <select id="translationSelect" class="select" aria-label="Select translation"></select>
         <select id="audioTranslationSelect" class="select" aria-label="Select audio translation"></select>
+
+        <div class="session-row">
+          <select id="sessionModeSelect" class="select" aria-label="Select session mode"></select>
+          <label class="toggle-row" for="dualPageToggle">
+            <input id="dualPageToggle" type="checkbox" />
+            <span>Dual-Page Spread</span>
+          </label>
+        </div>
 
         <div class="page-jump">
           <input id="pageInput" class="input" type="number" min="1" max="604" placeholder="Page (1-604)" />
@@ -542,7 +581,12 @@
           <button id="playPageBtn" class="btn btn-primary" disabled>Play Full Page</button>
           <button id="globalPlayPauseBtn" class="btn btn-secondary" disabled>Play</button>
         </div>
+        <div class="practice-row">
+          <button id="practiceRecordBtn" class="btn btn-secondary" type="button" disabled>Start Practice</button>
+          <button id="practicePlayBtn" class="btn btn-secondary" type="button" disabled>Play My Recitation</button>
+        </div>
         <div id="nowPlaying" class="status-row">Not playing</div>
+        <div id="practiceStatus" class="status-row">Practice mode ready</div>
         <div class="kbd-hint">Shortcuts: Space play/pause | Left/Right page | Up/Down ayah</div>
       </section>
       <div id="loadingIndicator" class="loading hidden">
@@ -551,15 +595,23 @@
       </div>
       <div id="errorBanner" class="error-banner hidden"></div>
       <section class="book-stage">
-        <article class="book-page">
-          <div id="ayahContainer" class="book-inner"></div>
-        </article>
+        <div id="bookSpread" class="book-spread">
+          <article class="book-page">
+            <div id="mainPageBadge" class="page-badge">Page</div>
+            <div id="ayahContainer" class="book-inner"></div>
+          </article>
+          <article id="secondaryPageCard" class="book-page hidden">
+            <div id="secondaryPageBadge" class="page-badge">Page</div>
+            <div id="ayahContainerSecondary" class="book-inner"></div>
+          </article>
+        </div>
       </section>
     </main>
   </div>
   <div id="playerBar" class="player-bar">Ready</div>
   <div id="wordTooltip" class="word-tooltip hidden"></div>
   <audio id="globalAudio" preload="none"></audio>
+  <audio id="practiceAudio" preload="none"></audio>
   <script>
     const API_BASE = "https://api.alquran.cloud/v1";
     const TOTAL_PAGES = 604;
@@ -579,6 +631,12 @@
       { id: "none", label: "Audio Translation: Off" },
       { id: "en.walk", label: "Audio Translation: English (Ibrahim Walk)" },
       { id: "ur.khan", label: "Audio Translation: Urdu (Shamshad Ali Khan)" }
+    ];
+    const SESSION_MODES = [
+      { id: "read", label: "Read Mode" },
+      { id: "listen", label: "Listen Mode" },
+      { id: "memorize", label: "Memorize Mode" },
+      { id: "reflect", label: "Reflect Mode" }
     ];
     const SPEED_OPTIONS = [0.75, 1, 1.25, 1.5];
     const REPEAT_OPTIONS = [1, 2, 3, 5, 10];
@@ -619,6 +677,8 @@
       currentReciter: RECITERS[0].id,
       currentTranslation: TRANSLATIONS[0].id,
       currentAudioTranslation: AUDIO_TRANSLATIONS[0].id,
+      sessionMode: SESSION_MODES[0].id,
+      dualPageEnabled: false,
       currentAyahIndex: -1,
       currentAyahRepeatLeft: 1,
       currentPlaybackPhase: "arabic",
@@ -635,6 +695,16 @@
       translationVisible: true,
       dailyGoal: 5,
       pendingHighlightAyahNumber: null,
+      secondaryPage: null,
+      secondaryAyahs: [],
+      ayahDurationCache: {},
+      practiceRecordings: {},
+      practiceMediaRecorder: null,
+      practiceStream: null,
+      practiceChunks: [],
+      practiceActiveAyahNumber: null,
+      practiceRecordingStartMs: 0,
+      practiceIsRecording: false,
       bookmarks: [],
       progress: {
         completedPages: [],
@@ -649,6 +719,8 @@
       reciterSelect: document.getElementById("reciterSelect"),
       translationSelect: document.getElementById("translationSelect"),
       audioTranslationSelect: document.getElementById("audioTranslationSelect"),
+      sessionModeSelect: document.getElementById("sessionModeSelect"),
+      dualPageToggle: document.getElementById("dualPageToggle"),
       pageInput: document.getElementById("pageInput"),
       goPageBtn: document.getElementById("goPageBtn"),
       translationToggle: document.getElementById("translationToggle"),
@@ -671,14 +743,23 @@
       nextPageBtn: document.getElementById("nextPageBtn"),
       playPageBtn: document.getElementById("playPageBtn"),
       globalPlayPauseBtn: document.getElementById("globalPlayPauseBtn"),
+      practiceRecordBtn: document.getElementById("practiceRecordBtn"),
+      practicePlayBtn: document.getElementById("practicePlayBtn"),
       nowPlaying: document.getElementById("nowPlaying"),
+      practiceStatus: document.getElementById("practiceStatus"),
       loadingIndicator: document.getElementById("loadingIndicator"),
       loadingText: document.getElementById("loadingText"),
       errorBanner: document.getElementById("errorBanner"),
+      bookSpread: document.getElementById("bookSpread"),
+      mainPageBadge: document.getElementById("mainPageBadge"),
+      secondaryPageCard: document.getElementById("secondaryPageCard"),
+      secondaryPageBadge: document.getElementById("secondaryPageBadge"),
       ayahContainer: document.getElementById("ayahContainer"),
+      ayahContainerSecondary: document.getElementById("ayahContainerSecondary"),
       playerBar: document.getElementById("playerBar"),
       wordTooltip: document.getElementById("wordTooltip"),
-      audio: document.getElementById("globalAudio")
+      audio: document.getElementById("globalAudio"),
+      practiceAudio: document.getElementById("practiceAudio")
     };
 
     function safeLocalStorageGet(key, fallbackValue) {
@@ -735,6 +816,23 @@
       return clamp(value, 1, TOTAL_PAGES);
     }
 
+    function pageStep() {
+      return state.dualPageEnabled ? 2 : 1;
+    }
+
+    function maxPrimaryPageForMode() {
+      return state.dualPageEnabled ? TOTAL_PAGES - 1 : TOTAL_PAGES;
+    }
+
+    function normalizePageForMode(pageValue) {
+      let page = clampPage(pageValue);
+      if (state.dualPageEnabled) {
+        if (page > TOTAL_PAGES - 1) page = TOTAL_PAGES - 1;
+        if (page % 2 === 0) page -= 1;
+      }
+      return clampPage(page);
+    }
+
     function setLoading(isLoading, text = "Loading...") {
       els.loadingText.textContent = text;
       els.loadingIndicator.classList.toggle("hidden", !isLoading);
@@ -767,6 +865,8 @@
 
     function persistSettings() {
       safeLocalStorageSetJson(STORAGE_KEYS.settings, {
+        sessionMode: state.sessionMode,
+        dualPageEnabled: state.dualPageEnabled,
         continueAcrossPages: state.continueAcrossPages,
         pageLoop: state.pageLoop,
         rangeRepeatEnabled: state.rangeRepeatEnabled,
@@ -786,6 +886,10 @@
       state.currentPage = clampPage(Number(safeLocalStorageGet(STORAGE_KEYS.lastPage, "1")));
       state.currentReciter = safeLocalStorageGet(STORAGE_KEYS.reciter, RECITERS[0].id);
       state.currentTranslation = safeLocalStorageGet(STORAGE_KEYS.translation, TRANSLATIONS[0].id);
+      state.sessionMode = SESSION_MODES.some((mode) => mode.id === savedSettings.sessionMode)
+        ? savedSettings.sessionMode
+        : SESSION_MODES[0].id;
+      state.dualPageEnabled = !!savedSettings.dualPageEnabled;
       state.continueAcrossPages = !!savedSettings.continueAcrossPages;
       state.pageLoop = !!savedSettings.pageLoop;
       state.rangeRepeatEnabled = !!savedSettings.rangeRepeatEnabled;
@@ -838,6 +942,7 @@
       if (typeof state.progress.lastActiveDate !== "string") state.progress.lastActiveDate = "";
       if (!RECITERS.some((reciter) => reciter.id === state.currentReciter)) state.currentReciter = RECITERS[0].id;
       if (!TRANSLATIONS.some((edition) => edition.id === state.currentTranslation)) state.currentTranslation = TRANSLATIONS[0].id;
+      state.currentPage = normalizePageForMode(state.currentPage);
     }
 
     function persistProgress() {
@@ -852,13 +957,88 @@
       const hasAyahs = state.ayahs.length > 0;
       const hasPlayableAyahs = hasAyahs && state.ayahs.some((ayah) => !!ayah.audioUrl);
       els.prevPageBtn.disabled = state.currentPage <= 1;
-      els.nextPageBtn.disabled = state.currentPage >= TOTAL_PAGES;
+      els.nextPageBtn.disabled = state.currentPage >= maxPrimaryPageForMode();
       els.playPageBtn.disabled = !hasPlayableAyahs;
       els.globalPlayPauseBtn.disabled = !hasPlayableAyahs;
       els.globalPlayPauseBtn.textContent = els.audio.paused ? "Play" : "Pause";
       els.playPageBtn.textContent = state.isFullPageMode ? "Stop Full Page" : "Play Full Page";
       els.rangeStartInput.disabled = !state.rangeRepeatEnabled;
       els.rangeEndInput.disabled = !state.rangeRepeatEnabled;
+      const currentAyah = state.ayahs[state.currentAyahIndex] || null;
+      const hasPractice = !!(currentAyah && state.practiceRecordings[currentAyah.number]);
+      els.practiceRecordBtn.disabled = (!currentAyah && !state.practiceIsRecording) || (!hasAyahs && !state.practiceIsRecording);
+      els.practiceRecordBtn.textContent = state.practiceIsRecording ? "Stop Practice" : "Start Practice";
+      els.practicePlayBtn.disabled = !hasPractice || state.practiceIsRecording;
+    }
+
+    function updateSpreadLayout() {
+      const showDual = state.dualPageEnabled && state.secondaryAyahs.length > 0 && !!state.secondaryPage;
+      els.secondaryPageCard.classList.toggle("hidden", !showDual);
+      els.bookSpread.classList.toggle("dual", showDual);
+      els.mainPageBadge.textContent = showDual
+        ? `Spread Left: Page ${state.currentPage}`
+        : `Page ${state.currentPage}`;
+      if (showDual) {
+        els.secondaryPageBadge.textContent = `Spread Right: Page ${state.secondaryPage}`;
+      }
+    }
+
+    function applySessionMode(modeId, options = {}) {
+      const mode = SESSION_MODES.some((modeItem) => modeItem.id === modeId) ? modeId : SESSION_MODES[0].id;
+      state.sessionMode = mode;
+      if (mode === "read") {
+        state.translationVisible = true;
+        state.tajweedMode = false;
+        state.currentAudioTranslation = "none";
+        state.repeatAyahCount = 1;
+        state.playbackRate = 1;
+        state.continueAcrossPages = false;
+        state.pageLoop = false;
+        state.rangeRepeatEnabled = false;
+      } else if (mode === "listen") {
+        state.translationVisible = true;
+        state.tajweedMode = false;
+        state.currentAudioTranslation = "none";
+        state.repeatAyahCount = 1;
+        state.playbackRate = 1;
+        state.continueAcrossPages = true;
+        state.pageLoop = false;
+        state.rangeRepeatEnabled = false;
+      } else if (mode === "memorize") {
+        state.translationVisible = false;
+        state.tajweedMode = true;
+        state.currentAudioTranslation = "none";
+        state.repeatAyahCount = 3;
+        state.playbackRate = 0.75;
+        state.continueAcrossPages = false;
+        state.pageLoop = false;
+        state.rangeRepeatEnabled = false;
+      } else if (mode === "reflect") {
+        state.translationVisible = true;
+        state.tajweedMode = false;
+        state.currentAudioTranslation = "en.walk";
+        state.repeatAyahCount = 1;
+        state.playbackRate = 0.75;
+        state.continueAcrossPages = false;
+        state.pageLoop = false;
+        state.rangeRepeatEnabled = false;
+      }
+
+      state.currentAyahRepeatLeft = Math.max(1, state.repeatAyahCount);
+      if (options.syncUi !== false) {
+        els.sessionModeSelect.value = state.sessionMode;
+        els.translationToggle.checked = state.translationVisible;
+        els.tajweedToggle.checked = state.tajweedMode;
+        els.audioTranslationSelect.value = state.currentAudioTranslation;
+        els.repeatCountSelect.value = String(state.repeatAyahCount);
+        els.speedSelect.value = String(state.playbackRate);
+        els.continueQueueToggle.checked = state.continueAcrossPages;
+        els.rangeRepeatToggle.checked = state.rangeRepeatEnabled;
+      }
+      document.body.classList.toggle("translation-off", !state.translationVisible);
+      els.audio.playbackRate = state.playbackRate;
+      if (options.persist !== false) persistSettings();
+      updateButtons();
     }
 
     async function fetchJson(path) {
@@ -896,7 +1076,9 @@
     }
 
     function getCurrentPageSurahNumbers() {
-      return new Set(state.ayahs.map((ayah) => ayah.surah.number));
+      const combined = [...state.ayahs];
+      if (state.dualPageEnabled && state.secondaryAyahs.length) combined.push(...state.secondaryAyahs);
+      return new Set(combined.map((ayah) => ayah.surah.number));
     }
 
     function renderSurahList() {
@@ -982,7 +1164,7 @@
 
     function clearWordCursor(index = null) {
       const chips = index === null
-        ? Array.from(els.ayahContainer.querySelectorAll(".word-chip"))
+        ? Array.from(document.querySelectorAll("#ayahContainer .word-chip, #ayahContainerSecondary .word-chip"))
         : getWordChipsForAyah(index);
       chips.forEach((chip) => {
         chip.classList.remove("cursor-read", "cursor-active");
@@ -1023,6 +1205,7 @@
     function renderAyahs() {
       if (!state.ayahs.length) {
         els.ayahContainer.innerHTML = '<div class="empty-state">No page content available.</div>';
+        els.mainPageBadge.textContent = "Page";
         return;
       }
 
@@ -1053,7 +1236,36 @@
         `;
       }
       els.ayahContainer.innerHTML = html;
+      els.mainPageBadge.textContent = `Page ${state.currentPage}`;
       updateAyahButtons();
+    }
+
+    function renderSecondaryAyahs() {
+      if (!state.dualPageEnabled || !state.secondaryAyahs.length || !state.secondaryPage) {
+        els.ayahContainerSecondary.innerHTML = "";
+        return;
+      }
+
+      let html = "";
+      let previousSurahNumber = null;
+      for (let i = 0; i < state.secondaryAyahs.length; i += 1) {
+        const ayah = state.secondaryAyahs[i];
+        if (ayah.surah.number !== previousSurahNumber) {
+          html += `<div class="surah-divider">${escapeHtml(ayah.surah.englishName)} - ${escapeHtml(ayah.surah.name)}</div>`;
+          previousSurahNumber = ayah.surah.number;
+        }
+        html += `
+          <article class="ayah-card">
+            <div class="ayah-header">
+              <span class="ayah-number">Ayah ${ayah.numberInSurah}</span>
+            </div>
+            <p class="arabic-text" lang="ar" dir="rtl">${renderArabicText(ayah.arabicText)}</p>
+            <p class="translation-text">${escapeHtml(ayah.translationText || "")}</p>
+          </article>
+        `;
+      }
+      els.ayahContainerSecondary.innerHTML = html;
+      els.secondaryPageBadge.textContent = `Page ${state.secondaryPage}`;
     }
 
     function highlightAyah(index) {
@@ -1091,15 +1303,19 @@
     }
 
     function updatePageHeader() {
-      els.pageTitle.textContent = `Mushaf Page ${state.currentPage} / ${TOTAL_PAGES}`;
+      const isSpread = state.dualPageEnabled && state.secondaryPage;
+      els.pageTitle.textContent = isSpread
+        ? `Mushaf Spread ${state.currentPage}-${state.secondaryPage} / ${TOTAL_PAGES}`
+        : `Mushaf Page ${state.currentPage} / ${TOTAL_PAGES}`;
       els.pageInput.value = String(state.currentPage);
       if (!state.ayahs.length) {
         els.pageMeta.textContent = "No page metadata available.";
         return;
       }
+      const combinedAyahs = [...state.ayahs, ...(state.secondaryAyahs || [])];
       const unique = [];
       const seen = new Set();
-      state.ayahs.forEach((ayah) => {
+      combinedAyahs.forEach((ayah) => {
         if (!seen.has(ayah.surah.number)) {
           seen.add(ayah.surah.number);
           unique.push(`${ayah.surah.englishName} (${ayah.surah.name})`);
@@ -1107,7 +1323,7 @@
       });
       const translationLabel = TRANSLATIONS.find((item) => item.id === state.currentTranslation)?.label || state.currentTranslation;
       const audioTranslationLabel = AUDIO_TRANSLATIONS.find((item) => item.id === state.currentAudioTranslation)?.label || state.currentAudioTranslation;
-      els.pageMeta.textContent = `${unique.join(" | ")} | ${state.ayahs.length} Ayahs | Translation: ${translationLabel} | ${audioTranslationLabel}`;
+      els.pageMeta.textContent = `${unique.join(" | ")} | ${combinedAyahs.length} Ayahs visible | Translation: ${translationLabel} | ${audioTranslationLabel}`;
     }
 
     async function getSurahStartPage(surahNumber) {
@@ -1301,7 +1517,7 @@
     }
 
     async function loadPage(pageNumber, options = {}) {
-      const targetPage = clampPage(pageNumber);
+      const targetPage = normalizePageForMode(pageNumber);
       setLoading(true, `Loading page ${targetPage}...`);
       clearError();
       stopPlaybackState(!options.preserveMode);
@@ -1309,14 +1525,25 @@
       safeLocalStorageSet(STORAGE_KEYS.lastPage, String(targetPage));
 
       try {
+        const shouldLoadSecondary = state.dualPageEnabled && targetPage < TOTAL_PAGES;
+        const secondaryPage = shouldLoadSecondary ? targetPage + 1 : null;
         const translationAudioPromise = state.currentAudioTranslation === "none"
           ? Promise.resolve(null)
           : fetchJson(`/page/${targetPage}/${state.currentAudioTranslation}`).catch(() => null);
-        const [arabicPage, translationPage, audioPage, translationAudioPage] = await Promise.all([
+        const secondaryArabicPromise = shouldLoadSecondary
+          ? fetchJson(`/page/${secondaryPage}/quran-uthmani`).catch(() => null)
+          : Promise.resolve(null);
+        const secondaryTranslationPromise = shouldLoadSecondary
+          ? fetchJson(`/page/${secondaryPage}/${state.currentTranslation}`).catch(() => null)
+          : Promise.resolve(null);
+
+        const [arabicPage, translationPage, audioPage, translationAudioPage, secondaryArabicPage, secondaryTranslationPage] = await Promise.all([
           fetchJson(`/page/${targetPage}/quran-uthmani`),
           fetchJson(`/page/${targetPage}/${state.currentTranslation}`),
           fetchJson(`/page/${targetPage}/${state.currentReciter}`),
-          translationAudioPromise
+          translationAudioPromise,
+          secondaryArabicPromise,
+          secondaryTranslationPromise
         ]);
 
         const translationByAyah = new Map((translationPage.ayahs || []).map((ayah) => [ayah.number, ayah.text]));
@@ -1340,6 +1567,25 @@
             translationAudioUrl: translationAudioByAyah.get(ayah.number) || ""
           };
         });
+        state.secondaryPage = secondaryPage;
+        if (shouldLoadSecondary && secondaryArabicPage && secondaryTranslationPage) {
+          const secondaryTranslationByAyah = new Map(
+            (secondaryTranslationPage.ayahs || []).map((ayah) => [ayah.number, ayah.text])
+          );
+          state.secondaryAyahs = (secondaryArabicPage.ayahs || []).map((ayah) => ({
+            number: ayah.number,
+            numberInSurah: ayah.numberInSurah,
+            surah: ayah.surah,
+            page: ayah.page,
+            arabicText: ayah.text,
+            translationText: secondaryTranslationByAyah.get(ayah.number) || "",
+            audioUrl: "",
+            translationAudioUrl: ""
+          }));
+        } else {
+          state.secondaryAyahs = [];
+          state.secondaryPage = null;
+        }
         const nonFatalWarnings = [];
         if (!state.ayahs.some((ayah) => !!ayah.audioUrl)) {
           nonFatalWarnings.push("Selected reciter has no audio stream in this API. Please choose another reciter.");
@@ -1349,12 +1595,17 @@
         } else if (state.currentAudioTranslation !== "none" && !state.ayahs.some((ayah) => !!ayah.translationAudioUrl)) {
           nonFatalWarnings.push(`${translationAudioLabel()} has no verse audio on this page.`);
         }
+        if (shouldLoadSecondary && (!secondaryArabicPage || !secondaryTranslationPage)) {
+          nonFatalWarnings.push("Could not load the second page of this spread. Showing single page.");
+        }
         if (nonFatalWarnings.length) showError(nonFatalWarnings.join(" "));
 
         updateRangeBounds();
         updatePageHeader();
         renderSurahList();
         renderAyahs();
+        renderSecondaryAyahs();
+        updateSpreadLayout();
         if (state.pendingHighlightAyahNumber) {
           const index = state.ayahs.findIndex((ayah) => ayah.number === state.pendingHighlightAyahNumber);
           state.pendingHighlightAyahNumber = null;
@@ -1372,9 +1623,13 @@
         markProgressForPage(targetPage);
       } catch (error) {
         state.ayahs = [];
+        state.secondaryAyahs = [];
+        state.secondaryPage = null;
         updatePageHeader();
         renderSurahList();
         renderAyahs();
+        renderSecondaryAyahs();
+        updateSpreadLayout();
         updateButtons();
         showError(`Could not load page ${targetPage}: ${error.message}`);
       } finally {
@@ -1474,6 +1729,154 @@
       await playAyah(target, false);
     }
 
+    function currentAyahForPractice() {
+      if (state.currentAyahIndex < 0 || state.currentAyahIndex >= state.ayahs.length) return null;
+      return state.ayahs[state.currentAyahIndex];
+    }
+
+    async function getAudioDurationFromUrl(url) {
+      return new Promise((resolve, reject) => {
+        const audioEl = new Audio();
+        const timeoutId = setTimeout(() => reject(new Error("Duration load timeout")), 12000);
+        audioEl.preload = "metadata";
+        audioEl.src = url;
+        audioEl.onloadedmetadata = () => {
+          clearTimeout(timeoutId);
+          resolve(Number(audioEl.duration) || 0);
+        };
+        audioEl.onerror = () => {
+          clearTimeout(timeoutId);
+          reject(new Error("Could not read audio metadata"));
+        };
+      });
+    }
+
+    async function getReferenceDurationForAyah(ayah) {
+      if (!ayah || !ayah.audioUrl) return null;
+      if (Number.isFinite(state.ayahDurationCache[ayah.number])) return state.ayahDurationCache[ayah.number];
+      try {
+        const duration = await getAudioDurationFromUrl(ayah.audioUrl);
+        state.ayahDurationCache[ayah.number] = duration;
+        return duration;
+      } catch {
+        return null;
+      }
+    }
+
+    async function getBlobDuration(blobUrl) {
+      try {
+        return await getAudioDurationFromUrl(blobUrl);
+      } catch {
+        return null;
+      }
+    }
+
+    function updatePracticeStatus(text) {
+      els.practiceStatus.textContent = text;
+    }
+
+    async function startPracticeRecording() {
+      const ayah = currentAyahForPractice();
+      if (!ayah) {
+        showError("Select and play an ayah first, then start practice.");
+        return;
+      }
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        showError("Microphone recording is not supported in this browser.");
+        return;
+      }
+      if (typeof MediaRecorder === "undefined") {
+        showError("MediaRecorder API is unavailable in this browser.");
+        return;
+      }
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        const recorder = new MediaRecorder(stream);
+        state.practiceStream = stream;
+        state.practiceMediaRecorder = recorder;
+        state.practiceChunks = [];
+        state.practiceActiveAyahNumber = ayah.number;
+        state.practiceRecordingStartMs = Date.now();
+        state.practiceIsRecording = true;
+        updateButtons();
+        updatePracticeStatus(`Recording practice for ${ayah.surah.englishName} Ayah ${ayah.numberInSurah}...`);
+
+        recorder.ondataavailable = (event) => {
+          if (event.data && event.data.size > 0) state.practiceChunks.push(event.data);
+        };
+
+        recorder.onstop = async () => {
+          state.practiceIsRecording = false;
+          const blob = new Blob(state.practiceChunks, { type: recorder.mimeType || "audio/webm" });
+          const url = URL.createObjectURL(blob);
+          const old = state.practiceRecordings[ayah.number];
+          if (old && old.url) URL.revokeObjectURL(old.url);
+          const userDuration = await getBlobDuration(url) || ((Date.now() - state.practiceRecordingStartMs) / 1000);
+          const referenceDuration = await getReferenceDurationForAyah(ayah);
+          state.practiceRecordings[ayah.number] = {
+            url,
+            duration: userDuration,
+            capturedAt: new Date().toISOString()
+          };
+          if (state.practiceStream) {
+            state.practiceStream.getTracks().forEach((track) => track.stop());
+          }
+          state.practiceStream = null;
+          state.practiceMediaRecorder = null;
+          state.practiceChunks = [];
+          state.practiceActiveAyahNumber = null;
+          updateButtons();
+          if (referenceDuration && referenceDuration > 0) {
+            const ratio = ((userDuration / referenceDuration) * 100).toFixed(0);
+            updatePracticeStatus(
+              `Practice saved. Your duration: ${userDuration.toFixed(1)}s vs reciter: ${referenceDuration.toFixed(1)}s (${ratio}%).`
+            );
+          } else {
+            updatePracticeStatus(`Practice saved. Your duration: ${userDuration.toFixed(1)}s.`);
+          }
+        };
+
+        recorder.start();
+      } catch (error) {
+        state.practiceIsRecording = false;
+        updateButtons();
+        showError(`Microphone permission failed: ${error.message || "Unable to access microphone."}`);
+      }
+    }
+
+    function stopPracticeRecording() {
+      if (!state.practiceMediaRecorder || state.practiceMediaRecorder.state !== "recording") return;
+      state.practiceMediaRecorder.stop();
+    }
+
+    async function togglePracticeRecording() {
+      if (state.practiceIsRecording) {
+        stopPracticeRecording();
+      } else {
+        await startPracticeRecording();
+      }
+    }
+
+    async function playPracticeRecording() {
+      const ayah = currentAyahForPractice();
+      if (!ayah) {
+        showError("Select an ayah first to play your recorded practice.");
+        return;
+      }
+      const recording = state.practiceRecordings[ayah.number];
+      if (!recording || !recording.url) {
+        showError("No practice recording found for this ayah.");
+        return;
+      }
+      try {
+        els.practiceAudio.src = recording.url;
+        await els.practiceAudio.play();
+        updatePracticeStatus(`Playing your recitation for ${ayah.surah.englishName} Ayah ${ayah.numberInSurah}.`);
+      } catch {
+        showError("Could not play your recorded recitation.");
+      }
+    }
+
     async function reloadCurrentPagePreservingPosition() {
       const previousAyahNumber = state.currentAyahIndex >= 0 ? state.ayahs[state.currentAyahIndex].number : null;
       const wasPlaying = previousAyahNumber !== null && !els.audio.paused;
@@ -1512,6 +1915,22 @@
       await reloadCurrentPagePreservingPosition();
     }
 
+    async function setDualPageEnabled(enabled, options = {}) {
+      const nextValue = !!enabled;
+      if (state.dualPageEnabled === nextValue) return;
+      state.dualPageEnabled = nextValue;
+      els.dualPageToggle.checked = state.dualPageEnabled;
+      if (nextValue) {
+        state.currentPage = normalizePageForMode(state.currentPage);
+      }
+      persistSettings();
+      if (options.reload !== false) {
+        await loadPage(state.currentPage);
+      } else {
+        updateSpreadLayout();
+      }
+    }
+
     function initSelects() {
       els.reciterSelect.innerHTML = RECITERS.map(
         (item) => `<option value="${item.id}">${escapeHtml(item.label)} (${escapeHtml(item.id)})</option>`
@@ -1521,6 +1940,9 @@
       ).join("");
       els.audioTranslationSelect.innerHTML = AUDIO_TRANSLATIONS.map(
         (item) => `<option value="${item.id}">${escapeHtml(item.label)}</option>`
+      ).join("");
+      els.sessionModeSelect.innerHTML = SESSION_MODES.map(
+        (mode) => `<option value="${mode.id}">${escapeHtml(mode.label)}</option>`
       ).join("");
       els.repeatCountSelect.innerHTML = REPEAT_OPTIONS.map(
         (count) => `<option value="${count}">Repeat Ayah x${count}</option>`
@@ -1532,6 +1954,8 @@
       els.reciterSelect.value = state.currentReciter;
       els.translationSelect.value = state.currentTranslation;
       els.audioTranslationSelect.value = state.currentAudioTranslation;
+      els.sessionModeSelect.value = state.sessionMode;
+      els.dualPageToggle.checked = state.dualPageEnabled;
       els.repeatCountSelect.value = String(state.repeatAyahCount);
       els.speedSelect.value = String(state.playbackRate);
       els.translationToggle.checked = state.translationVisible;
@@ -1542,6 +1966,7 @@
       els.dailyGoalInput.value = String(state.dailyGoal);
       document.body.classList.toggle("translation-off", !state.translationVisible);
       els.audio.playbackRate = state.playbackRate;
+      applySessionMode(state.sessionMode, { persist: false, syncUi: true });
       updateButtons();
     }
 
@@ -1561,6 +1986,8 @@
         state.tajweedMode = els.tajweedToggle.checked;
         persistSettings();
         renderAyahs();
+        renderSecondaryAyahs();
+        updateSpreadLayout();
         highlightAyah(state.currentAyahIndex);
       });
 
@@ -1604,11 +2031,28 @@
         persistSettings();
       });
 
+      els.sessionModeSelect.addEventListener("change", async () => {
+        applySessionMode(els.sessionModeSelect.value, { persist: true, syncUi: true });
+        await reloadCurrentPagePreservingPosition();
+      });
+
+      els.dualPageToggle.addEventListener("change", async () => {
+        await setDualPageEnabled(els.dualPageToggle.checked, { reload: true });
+      });
+
       els.dailyGoalInput.addEventListener("change", () => {
         state.dailyGoal = clamp(Number(els.dailyGoalInput.value), 1, 50);
         els.dailyGoalInput.value = String(state.dailyGoal);
         persistSettings();
         renderProgress();
+      });
+
+      els.practiceRecordBtn.addEventListener("click", async () => {
+        await togglePracticeRecording();
+      });
+
+      els.practicePlayBtn.addEventListener("click", async () => {
+        await playPracticeRecording();
       });
 
       els.goPageBtn.addEventListener("click", () => {
@@ -1622,8 +2066,8 @@
         }
       });
 
-      els.prevPageBtn.addEventListener("click", () => loadPage(state.currentPage - 1));
-      els.nextPageBtn.addEventListener("click", () => loadPage(state.currentPage + 1));
+      els.prevPageBtn.addEventListener("click", () => loadPage(state.currentPage - pageStep()));
+      els.nextPageBtn.addEventListener("click", () => loadPage(state.currentPage + pageStep()));
       els.playPageBtn.addEventListener("click", toggleFullPagePlayback);
       els.globalPlayPauseBtn.addEventListener("click", toggleGlobalPlayPause);
       els.reciterSelect.addEventListener("change", handleReciterChange);
@@ -1706,6 +2150,16 @@
         }
       });
 
+      els.ayahContainerSecondary.addEventListener("click", (event) => {
+        const wordChip = event.target.closest(".word-chip[data-word]");
+        if (wordChip) {
+          const decodedWord = decodeURIComponent(wordChip.dataset.word || "");
+          showWordTooltip(decodedWord, wordChip.getBoundingClientRect());
+        } else {
+          hideWordTooltip();
+        }
+      });
+
       document.addEventListener("click", (event) => {
         if (!event.target.closest(".word-chip")) hideWordTooltip();
       });
@@ -1720,10 +2174,10 @@
           toggleGlobalPlayPause();
         } else if (event.key === "ArrowRight") {
           event.preventDefault();
-          loadPage(state.currentPage + 1);
+          loadPage(state.currentPage + pageStep());
         } else if (event.key === "ArrowLeft") {
           event.preventDefault();
-          loadPage(state.currentPage - 1);
+          loadPage(state.currentPage - pageStep());
         } else if (event.key === "ArrowDown") {
           event.preventDefault();
           playRelativeAyah(1);
@@ -1805,8 +2259,8 @@
           await playAyah(0, true);
           return;
         }
-        if (state.continueAcrossPages && state.currentPage < TOTAL_PAGES) {
-          await loadPage(state.currentPage + 1, { preserveMode: true });
+        if (state.continueAcrossPages && state.currentPage < maxPrimaryPageForMode()) {
+          await loadPage(state.currentPage + pageStep(), { preserveMode: true });
           if (state.ayahs.length) {
             state.isFullPageMode = true;
             await playAyah(0, true);
