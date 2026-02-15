@@ -874,6 +874,8 @@
       currentAyahRepeatLeft: 1,
       currentPlaybackPhase: "arabic",
       isFullPageMode: false,
+      isFullSurahMode: false,
+      fullSurahNumber: null,
       searchTerm: "",
       continueAcrossPages: false,
       pageLoop: false,
@@ -1198,7 +1200,11 @@
       els.playPageBtn.disabled = !hasPlayableAyahs;
       els.globalPlayPauseBtn.disabled = !hasPlayableAyahs;
       els.globalPlayPauseBtn.textContent = els.audio.paused ? "Play" : "Pause";
-      els.playPageBtn.textContent = state.isFullPageMode ? "Stop Full Page" : "Play Full Page";
+      els.playPageBtn.textContent = state.isFullSurahMode
+        ? "Stop Full Surah"
+        : state.isFullPageMode
+          ? "Stop Full Page"
+          : "Play Full Page";
       els.rangeStartInput.disabled = !state.rangeRepeatEnabled;
       els.rangeEndInput.disabled = !state.rangeRepeatEnabled;
       const currentAyah = state.ayahs[state.currentAyahIndex] || null;
@@ -1711,6 +1717,33 @@
       els.wordTooltip.classList.add("hidden");
     }
 
+    function clearSurahPlaybackMode() {
+      state.isFullSurahMode = false;
+      state.fullSurahNumber = null;
+    }
+
+    function surahPlaybackLabel(surahNumber) {
+      const surah = state.surahs.find((item) => item.number === surahNumber);
+      if (!surah) return `Surah ${surahNumber}`;
+      return `Surah ${surah.number}: ${surah.englishName}`;
+    }
+
+    function findPlayableAyahIndexForSurah(surahNumber, startIndex = 0) {
+      for (let i = Math.max(0, startIndex); i < state.ayahs.length; i += 1) {
+        const ayah = state.ayahs[i];
+        if (ayah.surah.number === surahNumber && ayah.audioUrl) return i;
+      }
+      return -1;
+    }
+
+    function finishFullSurahPlayback(surahNumber) {
+      state.isFullPageMode = false;
+      clearSurahPlaybackMode();
+      updatePlayerText(`Completed ${surahPlaybackLabel(surahNumber)}`);
+      updateButtons();
+      updateAyahButtons();
+    }
+
     function stopPlaybackState(resetMode = true) {
       els.audio.pause();
       els.audio.removeAttribute("src");
@@ -1718,7 +1751,10 @@
       state.currentAyahRepeatLeft = Math.max(1, state.repeatAyahCount);
       state.currentPlaybackPhase = "arabic";
       clearWordCursor();
-      if (resetMode) state.isFullPageMode = false;
+      if (resetMode) {
+        state.isFullPageMode = false;
+        clearSurahPlaybackMode();
+      }
       updatePlayerText("Not playing");
       updateAyahButtons();
       updateButtons();
@@ -1754,7 +1790,7 @@
     }
 
     async function loadPage(pageNumber, options = {}) {
-      const targetPage = normalizePageForMode(pageNumber);
+      const targetPage = options.forcePage ? clampPage(pageNumber) : normalizePageForMode(pageNumber);
       setLoading(true, `Loading page ${targetPage}...`);
       clearError();
       stopPlaybackState(!options.preserveMode);
@@ -1884,6 +1920,7 @@
       clearError();
       state.currentAyahIndex = index;
       state.isFullPageMode = fromFullPage;
+      if (!fromFullPage) clearSurahPlaybackMode();
       state.currentPlaybackPhase = "arabic";
       if (options.resetRepeatCounter !== false) state.currentAyahRepeatLeft = Math.max(1, state.repeatAyahCount);
       els.audio.src = ayah.audioUrl;
@@ -1892,12 +1929,15 @@
       clearWordCursor();
       updateWordCursorForCurrentAyah();
       updatePlayerText(
-        `Playing Page ${state.currentPage} | ${ayah.surah.englishName} ${ayah.numberInSurah} | ${state.playbackRate}x`
+        state.isFullSurahMode && state.fullSurahNumber === ayah.surah.number
+          ? `Playing ${surahPlaybackLabel(ayah.surah.number)} | Ayah ${ayah.numberInSurah} | ${state.playbackRate}x`
+          : `Playing Page ${state.currentPage} | ${ayah.surah.englishName} ${ayah.numberInSurah} | ${state.playbackRate}x`
       );
       try {
         await els.audio.play();
       } catch {
         state.isFullPageMode = false;
+        clearSurahPlaybackMode();
         showError("Playback could not start automatically. Press play again.");
       }
       updateButtons();
@@ -1907,6 +1947,7 @@
     async function handleAyahPlayButton(index) {
       if (index === state.currentAyahIndex) {
         state.isFullPageMode = false;
+        clearSurahPlaybackMode();
         if (els.audio.paused) {
           try {
             await els.audio.play();
@@ -1944,8 +1985,9 @@
 
     async function toggleFullPagePlayback() {
       if (!state.ayahs.length) return;
-      if (state.isFullPageMode) {
+      if (state.isFullPageMode || state.isFullSurahMode) {
         state.isFullPageMode = false;
+        clearSurahPlaybackMode();
         updateButtons();
         return;
       }
@@ -1953,6 +1995,7 @@
       let startIndex = state.currentAyahIndex;
       if (startIndex < 0) startIndex = range.enabled ? range.start : 0;
       if (range.enabled && (startIndex < range.start || startIndex > range.end)) startIndex = range.start;
+      clearSurahPlaybackMode();
       state.isFullPageMode = true;
       await playAyah(startIndex, true);
     }
@@ -1963,6 +2006,7 @@
       if (target === -1) target = offset >= 0 ? 0 : state.ayahs.length - 1;
       else target = clamp(target + offset, 0, state.ayahs.length - 1);
       state.isFullPageMode = false;
+      clearSurahPlaybackMode();
       await playAyah(target, false);
     }
 
@@ -2118,6 +2162,8 @@
       const previousAyahNumber = state.currentAyahIndex >= 0 ? state.ayahs[state.currentAyahIndex].number : null;
       const wasPlaying = previousAyahNumber !== null && !els.audio.paused;
       const wasFullMode = state.isFullPageMode;
+      const wasFullSurahMode = state.isFullSurahMode;
+      const previousSurahNumber = state.fullSurahNumber;
       await loadPage(state.currentPage);
       if (previousAyahNumber === null) return;
       const nextIndex = state.ayahs.findIndex((ayah) => ayah.number === previousAyahNumber);
@@ -2125,7 +2171,38 @@
       state.currentAyahIndex = nextIndex;
       highlightAyah(nextIndex);
       updateAyahButtons();
+      if (wasFullSurahMode && Number.isFinite(previousSurahNumber)) {
+        state.isFullSurahMode = true;
+        state.fullSurahNumber = previousSurahNumber;
+      }
       if (wasPlaying) await playAyah(nextIndex, wasFullMode);
+    }
+
+    async function openSurahAndPlay(surahNumber) {
+      setLoading(true, "Finding Surah opening page...");
+      clearError();
+      try {
+        if (state.dualPageEnabled) {
+          await setDualPageEnabled(false, { reload: false });
+        }
+        const page = await getSurahStartPage(surahNumber);
+        await loadPage(page, { forcePage: true });
+        const startIndex = findPlayableAyahIndexForSurah(surahNumber, 0);
+        if (startIndex === -1) {
+          clearSurahPlaybackMode();
+          showError(`Could not find playable Ayah for ${surahPlaybackLabel(surahNumber)} with this reciter.`);
+          return;
+        }
+        state.isFullSurahMode = true;
+        state.fullSurahNumber = surahNumber;
+        state.isFullPageMode = true;
+        await playAyah(startIndex, true);
+      } catch (error) {
+        clearSurahPlaybackMode();
+        showError(`Could not jump to Surah ${surahNumber}: ${error.message}`);
+      } finally {
+        setLoading(false);
+      }
     }
 
     async function handleReciterChange() {
@@ -2364,16 +2441,7 @@
         if (!button) return;
         const surahNumber = Number(button.dataset.surah);
         if (!Number.isFinite(surahNumber)) return;
-        setLoading(true, "Finding Surah opening page...");
-        clearError();
-        try {
-          const page = await getSurahStartPage(surahNumber);
-          await loadPage(page);
-        } catch (error) {
-          showError(`Could not jump to Surah ${surahNumber}: ${error.message}`);
-        } finally {
-          setLoading(false);
-        }
+        await openSurahAndPlay(surahNumber);
       });
 
       els.ayahContainer.addEventListener("click", (event) => {
@@ -2484,6 +2552,39 @@
           return;
         }
 
+        if (state.isFullSurahMode && Number.isFinite(state.fullSurahNumber)) {
+          const surahNumber = state.fullSurahNumber;
+          const nextSurahAyahIndex = findPlayableAyahIndexForSurah(surahNumber, state.currentAyahIndex + 1);
+          if (nextSurahAyahIndex !== -1) {
+            await playAyah(nextSurahAyahIndex, true);
+            return;
+          }
+          const currentAyah = state.ayahs[state.currentAyahIndex] || null;
+          const surahMeta = state.surahs.find((surah) => surah.number === surahNumber);
+          const isLastAyahInSurah = !!(
+            currentAyah &&
+            surahMeta &&
+            Number(currentAyah.numberInSurah) >= Number(surahMeta.numberOfAyahs)
+          );
+          if (isLastAyahInSurah) {
+            finishFullSurahPlayback(surahNumber);
+            return;
+          }
+          if (state.currentPage < TOTAL_PAGES) {
+            await loadPage(state.currentPage + 1, { preserveMode: true, forcePage: true });
+            const firstOnNextPage = findPlayableAyahIndexForSurah(surahNumber, 0);
+            if (firstOnNextPage !== -1) {
+              state.isFullPageMode = true;
+              state.isFullSurahMode = true;
+              state.fullSurahNumber = surahNumber;
+              await playAyah(firstOnNextPage, true);
+              return;
+            }
+          }
+          finishFullSurahPlayback(surahNumber);
+          return;
+        }
+
         const range = getRangeBoundIndexes();
         const nextIndex = state.currentAyahIndex + 1;
         if (range.enabled) {
@@ -2527,6 +2628,7 @@
 
       els.audio.addEventListener("error", () => {
         state.isFullPageMode = false;
+        clearSurahPlaybackMode();
         updateButtons();
         updateAyahButtons();
         showError("Audio playback failed. Try another reciter or Ayah.");
