@@ -1728,6 +1728,22 @@
       return `Surah ${surah.number}: ${surah.englishName}`;
     }
 
+    function getNextSurahNumber(currentSurahNumber) {
+      const ordered = state.surahs
+        .map((surah) => Number(surah.number))
+        .filter((surahNumber) => Number.isFinite(surahNumber))
+        .sort((a, b) => a - b);
+      if (!ordered.length) {
+        if (!Number.isFinite(currentSurahNumber) || currentSurahNumber >= 114) return null;
+        return currentSurahNumber + 1;
+      }
+      const currentIndex = ordered.indexOf(Number(currentSurahNumber));
+      if (currentIndex === -1) {
+        return ordered.find((surahNumber) => surahNumber > Number(currentSurahNumber)) || null;
+      }
+      return ordered[currentIndex + 1] || null;
+    }
+
     function findPlayableAyahIndexForSurah(surahNumber, startIndex = 0) {
       for (let i = Math.max(0, startIndex); i < state.ayahs.length; i += 1) {
         const ayah = state.ayahs[i];
@@ -1742,6 +1758,17 @@
       updatePlayerText(`Completed ${surahPlaybackLabel(surahNumber)}`);
       updateButtons();
       updateAyahButtons();
+    }
+
+    async function continueToNextSurahOrFinish(surahNumber) {
+      const nextSurahNumber = getNextSurahNumber(surahNumber);
+      if (Number.isFinite(nextSurahNumber)) {
+        const started = await openSurahAndPlay(nextSurahNumber, { suppressErrors: true });
+        if (started) return true;
+        showError(`Could not auto-play ${surahPlaybackLabel(nextSurahNumber)}.`);
+      }
+      finishFullSurahPlayback(surahNumber);
+      return false;
     }
 
     function stopPlaybackState(resetMode = true) {
@@ -2178,7 +2205,8 @@
       if (wasPlaying) await playAyah(nextIndex, wasFullMode);
     }
 
-    async function openSurahAndPlay(surahNumber) {
+    async function openSurahAndPlay(surahNumber, options = {}) {
+      const suppressErrors = !!options.suppressErrors;
       setLoading(true, "Finding Surah opening page...");
       clearError();
       try {
@@ -2190,16 +2218,20 @@
         const startIndex = findPlayableAyahIndexForSurah(surahNumber, 0);
         if (startIndex === -1) {
           clearSurahPlaybackMode();
-          showError(`Could not find playable Ayah for ${surahPlaybackLabel(surahNumber)} with this reciter.`);
-          return;
+          if (!suppressErrors) {
+            showError(`Could not find playable Ayah for ${surahPlaybackLabel(surahNumber)} with this reciter.`);
+          }
+          return false;
         }
         state.isFullSurahMode = true;
         state.fullSurahNumber = surahNumber;
         state.isFullPageMode = true;
         await playAyah(startIndex, true);
+        return true;
       } catch (error) {
         clearSurahPlaybackMode();
-        showError(`Could not jump to Surah ${surahNumber}: ${error.message}`);
+        if (!suppressErrors) showError(`Could not jump to Surah ${surahNumber}: ${error.message}`);
+        return false;
       } finally {
         setLoading(false);
       }
@@ -2567,7 +2599,7 @@
             Number(currentAyah.numberInSurah) >= Number(surahMeta.numberOfAyahs)
           );
           if (isLastAyahInSurah) {
-            finishFullSurahPlayback(surahNumber);
+            await continueToNextSurahOrFinish(surahNumber);
             return;
           }
           if (state.currentPage < TOTAL_PAGES) {
@@ -2581,7 +2613,7 @@
               return;
             }
           }
-          finishFullSurahPlayback(surahNumber);
+          await continueToNextSurahOrFinish(surahNumber);
           return;
         }
 
