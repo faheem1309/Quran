@@ -804,6 +804,8 @@
   <audio id="practiceAudio" preload="none"></audio>
   <script>
     const API_BASE = "https://api.alquran.cloud/v1";
+    const API_CACHE_PREFIX = "quran_api_cache_v1:";
+    const API_CACHE_LIMIT = 240;
     const TOTAL_PAGES = 604;
     const RECITERS = [
       { id: "ar.alafasy", label: "Mishary Alafasy" },
@@ -856,7 +858,8 @@
       translation: "quran_translation",
       settings: "quran_settings",
       bookmarks: "quran_bookmarks",
-      progress: "quran_progress"
+      progress: "quran_progress",
+      apiCacheIndex: "quran_api_cache_index"
     };
     let deferredInstallPrompt = null;
 
@@ -991,6 +994,46 @@
       } catch {
         // Ignore storage errors.
       }
+    }
+
+    function apiCacheStorageKey(path) {
+      return `${API_CACHE_PREFIX}${path}`;
+    }
+
+    function readApiCacheIndex() {
+      const entries = safeLocalStorageGetJson(STORAGE_KEYS.apiCacheIndex, []);
+      if (!Array.isArray(entries)) return [];
+      return entries.filter((entry) => entry && typeof entry.key === "string" && Number.isFinite(entry.updatedAt));
+    }
+
+    function readCachedApiPayload(path) {
+      const cached = safeLocalStorageGetJson(apiCacheStorageKey(path), null);
+      if (!cached || typeof cached !== "object" || !("data" in cached)) return null;
+      return cached.data;
+    }
+
+    function writeCachedApiPayload(path, data) {
+      const key = apiCacheStorageKey(path);
+      safeLocalStorageSetJson(key, { cachedAt: Date.now(), data });
+
+      const now = Date.now();
+      const index = readApiCacheIndex().filter((entry) => entry.key !== key);
+      index.push({ key, updatedAt: now });
+
+      if (index.length > API_CACHE_LIMIT) {
+        index.sort((a, b) => a.updatedAt - b.updatedAt);
+        const toRemove = index.length - API_CACHE_LIMIT;
+        for (let i = 0; i < toRemove; i += 1) {
+          try {
+            localStorage.removeItem(index[i].key);
+          } catch {
+            // Ignore storage cleanup failures.
+          }
+        }
+        index.splice(0, toRemove);
+      }
+
+      safeLocalStorageSetJson(STORAGE_KEYS.apiCacheIndex, index);
     }
 
     function escapeHtml(value) {
@@ -1284,7 +1327,8 @@
       updateButtons();
     }
 
-    async function fetchJson(path) {
+    async function fetchJson(path, options = {}) {
+      const fallbackContext = options.fallbackContext || null;
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 15000);
       try {
@@ -1294,10 +1338,19 @@
           const reason = payload && payload.data ? String(payload.data) : `Request failed (${response.status})`;
           throw new Error(reason);
         }
+        writeCachedApiPayload(path, payload.data);
         return payload.data;
       } catch (error) {
+        const cachedPayload = readCachedApiPayload(path);
+        if (cachedPayload !== null) {
+          if (fallbackContext) fallbackContext.usedCache = true;
+          return cachedPayload;
+        }
         if (error.name === "AbortError") {
           throw new Error("Request timed out. Please check your internet connection.");
+        }
+        if (typeof navigator !== "undefined" && navigator && navigator.onLine === false) {
+          throw new Error("You are offline and this content is not cached yet. Connect once to cache it.");
         }
         throw error;
       } finally {
@@ -1309,8 +1362,12 @@
       setLoading(true, "Loading Surah list...");
       clearError();
       try {
-        state.surahs = await fetchJson("/surah");
+        const fallbackContext = { usedCache: false };
+        state.surahs = await fetchJson("/surah", { fallbackContext });
         renderSurahList();
+        if (fallbackContext.usedCache) {
+          showError("Offline mode active: showing cached Surah list.");
+        }
       } catch (error) {
         showError(`Could not load Surah list: ${error.message}`);
       } finally {
@@ -1818,6 +1875,7 @@
 
     async function loadPage(pageNumber, options = {}) {
       const targetPage = options.forcePage ? clampPage(pageNumber) : normalizePageForMode(pageNumber);
+      const fallbackContext = { usedCache: false };
       setLoading(true, `Loading page ${targetPage}...`);
       clearError();
       stopPlaybackState(!options.preserveMode);
@@ -1829,18 +1887,18 @@
         const secondaryPage = shouldLoadSecondary ? targetPage + 1 : null;
         const translationAudioPromise = state.currentAudioTranslation === "none"
           ? Promise.resolve(null)
-          : fetchJson(`/page/${targetPage}/${state.currentAudioTranslation}`).catch(() => null);
+          : fetchJson(`/page/${targetPage}/${state.currentAudioTranslation}`, { fallbackContext }).catch(() => null);
         const secondaryArabicPromise = shouldLoadSecondary
-          ? fetchJson(`/page/${secondaryPage}/quran-uthmani`).catch(() => null)
+          ? fetchJson(`/page/${secondaryPage}/quran-uthmani`, { fallbackContext }).catch(() => null)
           : Promise.resolve(null);
         const secondaryTranslationPromise = shouldLoadSecondary
-          ? fetchJson(`/page/${secondaryPage}/${state.currentTranslation}`).catch(() => null)
+          ? fetchJson(`/page/${secondaryPage}/${state.currentTranslation}`, { fallbackContext }).catch(() => null)
           : Promise.resolve(null);
 
         const [arabicPage, translationPage, audioPage, translationAudioPage, secondaryArabicPage, secondaryTranslationPage] = await Promise.all([
-          fetchJson(`/page/${targetPage}/quran-uthmani`),
-          fetchJson(`/page/${targetPage}/${state.currentTranslation}`),
-          fetchJson(`/page/${targetPage}/${state.currentReciter}`),
+          fetchJson(`/page/${targetPage}/quran-uthmani`, { fallbackContext }),
+          fetchJson(`/page/${targetPage}/${state.currentTranslation}`, { fallbackContext }),
+          fetchJson(`/page/${targetPage}/${state.currentReciter}`, { fallbackContext }),
           translationAudioPromise,
           secondaryArabicPromise,
           secondaryTranslationPromise
@@ -1887,6 +1945,9 @@
           state.secondaryPage = null;
         }
         const nonFatalWarnings = [];
+        if (fallbackContext.usedCache) {
+          nonFatalWarnings.push("Offline mode active: showing cached page data.");
+        }
         if (!state.ayahs.some((ayah) => !!ayah.audioUrl)) {
           nonFatalWarnings.push("Selected reciter has no audio stream in this API. Please choose another reciter.");
         }
